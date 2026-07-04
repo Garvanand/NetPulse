@@ -14,7 +14,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.storage.models import (
+from app.db.models import (
     ASMetadataModel,
     ASRelationshipModel,
     BGPEventModel,

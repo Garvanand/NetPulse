@@ -14,8 +14,8 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
-from app.dependencies import get_db_session, get_redis
+from app.core.config import get_settings
+from app.core.dependencies import get_db_session, get_redis
 
 logger = structlog.get_logger()
 
