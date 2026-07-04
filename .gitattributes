@@ -1,1 +1,2 @@
+*.yaml filter=lfs diff=lfs merge=lfs -text
 backend/tests/fixtures/cassettes/test_ripe_atlas_client.yaml filter=lfs diff=lfs merge=lfs -text
