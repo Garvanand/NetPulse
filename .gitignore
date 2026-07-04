@@ -1,0 +1,61 @@
+# ── Python ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# ── Virtual Environment ────────────────────────────────────────────
+.venv/
+venv/
+ENV/
+
+# ── Environment Files ──────────────────────────────────────────────
+.env
+.env.local
+.env.production
+.env.staging
+
+# ── IDE ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Node.js ─────────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+.vercel
+
+# ── ML Artifacts ────────────────────────────────────────────────────
+*.pt
+*.pth
+*.ckpt
+*.onnx
+model_checkpoints/
+
+# ── Data (downloaded datasets) ──────────────────────────────────────
+data/
+*.mrt
+*.mrt.gz
+*.bz2
+
+# ── Logs ────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Coverage ────────────────────────────────────────────────────────
+.coverage
+htmlcov/
+.pytest_cache/
