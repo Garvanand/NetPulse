@@ -1,0 +1,88 @@
+"use client"
+
+import * as React from "react"
+import Link from "next/link"
+import { motion } from "framer-motion"
+
+import { Button } from "@/components/ui/Button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card"
+import { useAuth } from "@/lib/auth-context"
+import { useToast } from "@/components/ui/Toast"
+
+export default function SignupPage() {
+  const [email, setEmail] = React.useState("")
+  const [password, setPassword] = React.useState("")
+  const [isLoading, setIsLoading] = React.useState(false)
+  const { register } = useAuth()
+  const { addToast } = useToast()
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsLoading(true)
+    
+    try {
+      await register({ email, password })
+      addToast({ title: "Account created!", description: "Please sign in.", type: "success" })
+    } catch (err: any) {
+      addToast({ 
+        title: "Registration Failed", 
+        description: err.message || "An error occurred",
+        type: "error"
+      })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center p-4">
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="w-full max-w-md"
+      >
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-2xl text-center">Create Account</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium" htmlFor="email">Email</label>
+                <input 
+                  id="email"
+                  type="email" 
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  placeholder="name@example.com"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium" htmlFor="password">Password</label>
+                <input 
+                  id="password"
+                  type="password" 
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+              <Button type="submit" className="w-full" isLoading={isLoading}>
+                Sign Up
+              </Button>
+            </form>
+            <div className="mt-4 text-center text-sm text-muted-foreground">
+              Already have an account?{" "}
+              <Link href="/login" className="text-primary hover:underline">
+                Sign in
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      </motion.div>
+    </div>
+  )
+}
