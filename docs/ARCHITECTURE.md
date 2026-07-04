@@ -15,15 +15,13 @@ graph TB
         RL[RIPE RIS Live<br/>BGP WebSocket stream<br/>real-time updates]
         RV[RouteViews<br/>MRT archive dumps<br/>15-min intervals]
         CA[CAIDA Dataset<br/>AS relationships<br/>serial-2 graph]
-        CF[Cloudflare Radar<br/>traffic/outage signals<br/>corroboration]
     end
 
     subgraph Ingestion Layer
-        RA -->|REST poll 5min| ING_ATLAS[ripe_atlas.py<br/>APScheduler job]
-        RL -->|WebSocket stream| ING_RIS[ris_live.py<br/>async consumer]
-        RV -->|HTTP download 15min| ING_RV[routeviews.py<br/>BGPKIT parser]
-        CA -->|HTTP download daily| ING_CA[caida.py<br/>relationship parser]
-        CF -->|REST poll 15min| ING_CF[cloudflare_radar.py<br/>outage poller]
+        RA -->|REST poll| ING_ATLAS[ripe_atlas_client.py]
+        RL -->|WebSocket stream| ING_RIS[ripe_ris_client.py]
+        RV -->|HTTP download| ING_RV[routeviews_client.py]
+        CA -->|HTTP download| ING_CA[caida_loader.py]
     end
 
     subgraph Storage Layer
@@ -33,7 +31,6 @@ graph TB
         ING_RV -->|INSERT| BGP
         ING_CA -->|UPSERT| ASR[(as_relationships<br/>adjacency table)]
         ING_CA -->|UPSERT| ASM[(as_metadata<br/>enrichment)]
-        ING_CF -->|UPDATE| INC[(incidents<br/>corroboration)]
     end
 
     subgraph ML Engine
@@ -41,46 +38,30 @@ graph TB
         BGP -->|churn rate| FE
         ASR -->|graph structure| FE
 
-        FE -->|per-probe stats| ANOM[Anomaly Scorer<br/>Z-score + MAD]
-        FE -->|RTT time series| TS[Time-Series Head<br/>LSTM / Transformer]
-        FE -->|graph snapshots| GNN[Temporal GNN<br/>PyG Temporal RGCN]
+        FE -->|graph snapshots| GNN[Temporal GNN<br/>Custom PyTorch GConvGRU]
 
-        ANOM -->|anomaly scores| DET[Incident Detector<br/>threshold + corroboration]
-        TS -->|predicted RTT| DET
+        FE -->|per-probe stats| DET[Incident Engine<br/>latency + BGP + GNN thresholds]
         GNN -->|instability scores| DET
 
         DET -->|confirmed incident| EXP[Explainer<br/>Claude API bounded call]
-        DET -->|INSERT| INC
+        DET -->|INSERT| INC[(incidents<br/>Standard Postgres)]
         EXP -->|UPDATE explanation| INC
     end
 
     subgraph Backend API - FastAPI
         INC -->|query| API_INC[/api/v1/incidents]
-        PM -->|query| API_TS[/api/v1/timeseries]
-        PR -->|query| API_MAP[/api/v1/map/probes]
+        PM -->|query| API_TS[/api/v1/measurements]
+        PR -->|query| API_MAP[/api/v1/measurements/probes]
         ASR -->|query| API_TOPO[/api/v1/topology]
-        ASM -->|query| API_AS[/api/v1/as/asn]
+        BGP -->|query| API_BGP[/api/v1/bgp]
 
-        API_INC --> CACHE[(Redis Cache)]
-        API_MAP --> CACHE
-        API_TOPO --> CACHE
-
-        DET -->|push| WS[WebSocket /ws/live]
+        API_TOPO --> CACHE[(Redis Cache)]
     end
 
     subgraph Frontend - Next.js
         API_MAP -->|REST| MAP[World Map<br/>deck.gl]
         API_TOPO -->|REST| GRAPH[AS Topology<br/>force-directed graph]
         API_INC -->|REST| TIMELINE[Incident Timeline<br/>filterable list]
-        API_AS -->|REST| DETAIL[AS Detail View<br/>latency + predictions]
-        API_TS -->|REST| CHART[Latency Charts<br/>time-series plots]
-        WS -->|WebSocket| LIVE[Live Updates<br/>real-time overlays]
-    end
-
-    subgraph Observability
-        API_INC -.->|structured logs| LOG[structlog<br/>JSON / console]
-        API_INC -.->|metrics| MET[/metrics<br/>Prometheus format]
-        API_INC -.->|status| HEALTH[/health<br/>dependency checks]
     end
 ```
 
@@ -88,43 +69,9 @@ graph TB
 
 ## 2. Component Architecture (Detail)
 
-### 2.1 Ingestion Layer
+### 2.1 Storage Layer
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      INGESTION LAYER                             │
-│                                                                   │
-│  ┌─────────────┐  ┌─────────────┐  ┌──────────────────────────┐ │
-│  │ APScheduler  │  │  Async WS   │  │     Periodic Jobs        │ │
-│  │  (in-proc)   │  │  Consumer   │  │                          │ │
-│  │              │  │              │  │  RouteViews: 15 min      │ │
-│  │  Atlas: 5min │  │  RIS Live:  │  │  CAIDA:     24 hours     │ │
-│  │  CF Radar:   │  │  continuous │  │                          │ │
-│  │    15min     │  │              │  │                          │ │
-│  └──────┬───────┘  └──────┬───────┘  └───────────┬──────────────┘ │
-│         │                 │                       │               │
-│         ▼                 ▼                       ▼               │
-│  ┌──────────────────────────────────────────────────────────────┐ │
-│  │              Batch Writer (asyncpg bulk INSERT)              │ │
-│  │                                                              │ │
-│  │  • Buffer incoming records in memory (configurable batch     │ │
-│  │    size: 100–1000 rows)                                      │ │
-│  │  • Flush on batch full OR timer (every 5 seconds)            │ │
-│  │  • ON CONFLICT DO NOTHING for deduplication                  │ │
-│  │  • Track ingestion_lag_seconds metric per source             │ │
-│  └──────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Key design decisions:**
-- APScheduler runs **in-process** (no separate Celery worker) — see [ADR-0005](adr/0005-deployment-strategy-no-docker.md)
-- RIS Live WebSocket consumer runs as an **asyncio background task** within the FastAPI lifespan
-- Batch writer amortizes INSERT cost over many rows
-- Each ingestion module is a self-contained feature folder with its own parsing logic
-
-### 2.2 Storage Layer
-
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                       STORAGE LAYER                              │
 │                                                                   │
@@ -137,259 +84,47 @@ graph TB
 │  │                                                              │ │
 │  │  Standard tables:                                            │ │
 │  │    • probes, as_relationships, as_metadata, incidents        │ │
-│  │                                                              │ │
-│  │  Retention policies:                                         │ │
-│  │    • 90-day drop policy on hypertables                       │ │
-│  │    • Continuous aggregates for hourly/daily rollups           │ │
+│  │    • users, api_keys                                         │ │
 │  └──────────────────────────────────────────────────────────────┘ │
 │                                                                   │
 │  ┌──────────────────────────────────────────────────────────────┐ │
 │  │                         Redis 7+                             │ │
 │  │                                                              │ │
 │  │  Caching:                                                    │ │
-│  │    • Map probe data (TTL: 30s)                               │ │
-│  │    • Active incidents (TTL: 15s)                              │ │
-│  │    • Topology subgraph (TTL: 5min)                           │ │
-│  │    • Incident explanations (TTL: 24h)                        │ │
+│  │    • Topology subgraph (TTL: 5min) drops latency to <20ms    │ │
 │  │                                                              │ │
 │  │  Rate Limiting:                                              │ │
-│  │    • Sliding window counters per API key                     │ │
-│  │                                                              │ │
-│  │  Pub/Sub:                                                    │ │
-│  │    • WebSocket broadcast channel (if multi-instance later)   │ │
+│  │    • Sliding window counters per authenticated user          │ │
 │  └──────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.3 ML Engine
+### 2.2 ML Engine
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        ML ENGINE                                 │
-│                                                                   │
-│  ┌──────────────────────────────────────────────────────────────┐ │
-│  │  Feature Engineering Pipeline                                │ │
-│  │                                                              │ │
-│  │  Scheduled: every 5 minutes (anomaly), every 1 hour (GNN)   │ │
-│  │                                                              │ │
-│  │  1. Query time-windowed aggregates from hypertables          │ │
-│  │  2. Compute per-probe: mean_rtt, p95_rtt, packet_loss       │ │
-│  │  3. Compute per-AS: bgp_churn_rate, announcement_count      │ │
-│  │  4. Aggregate probe features to AS level                    │ │
-│  │  5. Join with structural features (degree, cone_size)        │ │
-│  │  6. Build graph snapshot: adjacency + node feature matrix    │ │
-│  └──────────────┬────────────────────┬─────────────────┬────────┘ │
-│                 │                    │                  │          │
-│                 ▼                    ▼                  ▼          │
-│  ┌──────────────────┐ ┌──────────────────┐ ┌────────────────────┐ │
-│  │  Anomaly Scorer   │ │ Time-Series Head │ │  Temporal GNN      │ │
-│  │                    │ │                  │ │                    │ │
-│  │  • Z-score / MAD  │ │  • LSTM (2-layer)│ │  • RGCN layers     │ │
-│  │  • Per-probe      │ │  • 5-min inputs  │ │  • GRU recurrence  │ │
-│  │  • Per-AS churn   │ │  • 15/30/60 min  │ │  • 1-hour snapshots│ │
-│  │  • Rolling window │ │    forecast      │ │  • 1–4 hour pred   │ │
-│  │  • No training    │ │  • 30-day train  │ │  • 30–90 day train │ │
-│  │    needed         │ │                  │ │  • MVP: 2K AS nodes│ │
-│  └────────┬─────────┘ └────────┬─────────┘ └──────────┬─────────┘ │
-│           │                    │                       │           │
-│           ▼                    ▼                       ▼           │
-│  ┌──────────────────────────────────────────────────────────────┐ │
-│  │  Incident Detector                                           │ │
-│  │                                                              │ │
-│  │  Rules:                                                      │ │
-│  │  1. anomaly_score > 0.8 → create LOW incident               │ │
-│  │  2. anomaly + prediction_corroboration → MEDIUM              │ │
-│  │  3. Multiple ASes affected → HIGH                            │ │
-│  │  4. Backbone AS (high cone_size) + prolonged → CRITICAL      │ │
-│  │  5. Cloudflare Radar confirms → escalate severity            │ │
-│  └──────────────────────────┬───────────────────────────────────┘ │
-│                             │                                     │
-│                             ▼                                     │
-│  ┌──────────────────────────────────────────────────────────────┐ │
-│  │  Explainer (Claude API)                                      │ │
-│  │                                                              │ │
-│  │  • Triggered: ONLY on confirmed incidents (score ≥ MEDIUM)   │ │
-│  │  • Input: structured JSON (affected ASes, probes, BGP events,│ │
-│  │    magnitude, timeline)                                      │ │
-│  │  • Output: 2–3 sentence root-cause hypothesis                │ │
-│  │  • Constraints: max 10 calls/hour, 24h cache, never for     │ │
-│  │    detection/prediction — see ADR-0004                       │ │
-│  └──────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-```
+The machine learning engine deviates slightly from the original architecture documentation to prioritize operational stability and avoid event-loop blocking:
 
-### 2.4 Backend API (FastAPI)
+- **GNN Implementation**: Instead of importing `PyTorch Geometric Temporal`, we built a custom `GConvGRU` in `app/ml/gnn_model.py`. This reduces massive binary dependency weight and cross-platform compilation issues (especially on Windows).
+- **Concurrency**: ML Inference is explicitly offloaded to `asyncio.to_thread`. Tensor multiplications are synchronous CPU-bound operations that would otherwise stall FastAPI's main event loop.
+- **Incident Engine**: Acts as a hard boundary between statistical noise and LLM invocations. We do not invoke the LLM unless the Temporal GNN score AND Z-Score threshold are both breached concurrently.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    BACKEND API (FastAPI)                          │
-│                                                                   │
-│  ┌──────────────┐  ┌──────────────┐  ┌────────────────────────┐  │
-│  │ Middleware    │  │  JWT Auth    │  │   Rate Limiter         │  │
-│  │              │  │              │  │   (Redis sliding       │  │
-│  │ • CORS       │  │ • Token      │  │    window)             │  │
-│  │ • Logging    │  │   validation │  │                        │  │
-│  │ • Metrics    │  │ • API keys   │  │   60 req/min default   │  │
-│  └──────┬───────┘  └──────┬───────┘  └──────────┬─────────────┘  │
-│         │                 │                      │                │
-│         ▼                 ▼                      ▼                │
-│  ┌──────────────────────────────────────────────────────────────┐ │
-│  │                    Route Handlers                            │ │
-│  │                                                              │ │
-│  │  REST:                                                       │ │
-│  │    GET  /health                     (no auth)                │ │
-│  │    GET  /api/v1/map/probes          (auth required)          │ │
-│  │    GET  /api/v1/map/incidents       (auth required)          │ │
-│  │    GET  /api/v1/as/{asn}            (auth required)          │ │
-│  │    GET  /api/v1/as/{asn}/predictions(auth required)          │ │
-│  │    GET  /api/v1/incidents           (auth required)          │ │
-│  │    GET  /api/v1/incidents/{id}      (auth required)          │ │
-│  │    GET  /api/v1/topology            (auth required)          │ │
-│  │    GET  /api/v1/timeseries/{pid}    (auth required)          │ │
-│  │                                                              │ │
-│  │  WebSocket:                                                  │ │
-│  │    WS   /ws/live                    (token in query param)   │ │
-│  └──────────────────────────┬───────────────────────────────────┘ │
-│                             │                                     │
-│                             ▼                                     │
-│  ┌──────────────────────────────────────────────────────────────┐ │
-│  │               Repository Layer                               │ │
-│  │                                                              │ │
-│  │  ProbeRepo · MeasurementRepo · BGPEventRepo                 │ │
-│  │  ASGraphRepo · IncidentRepo                                  │ │
-│  │                                                              │ │
-│  │  • Typed async methods                                       │ │
-│  │  • Routes never touch SQLAlchemy directly                    │ │
-│  │  • Upsert with ON CONFLICT for idempotent writes             │ │
-│  └──────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-```
+### 2.3 Backend API (FastAPI)
 
-### 2.5 Frontend (Next.js)
+The backend enforces the **Repository Pattern**. Route handlers never see SQLAlchemy syntax. They inject the DB session into a Repository (e.g. `IncidentRepository`), which yields Pydantic-compliant models.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    FRONTEND (Next.js 16+)                        │
-│                                                                   │
-│  ┌──────────────────────────────────────────────────────────────┐ │
-│  │  App Router Pages                                            │ │
-│  │                                                              │ │
-│  │  /              → Dashboard (Map View — default)             │ │
-│  │  /as/[asn]      → AS Detail View                             │ │
-│  │  /topology      → AS Topology Graph                          │ │
-│  │  /incidents     → Incident Timeline                          │ │
-│  │  /settings      → API Key Management                         │ │
-│  └──────────────────────────────────────────────────────────────┘ │
-│                                                                   │
-│  ┌──────────────┐  ┌──────────────┐  ┌────────────────────────┐  │
-│  │ Map Layer    │  │ Graph Layer  │  │  Data Layer            │  │
-│  │              │  │              │  │                        │  │
-│  │ deck.gl      │  │ react-force- │  │  • API client (httpx)  │  │
-│  │ ScatterLayer │  │   graph-3d   │  │  • useWebSocket hook   │  │
-│  │ HeatmapLayer │  │              │  │  • SWR / React Query   │  │
-│  │ ArcLayer     │  │ Nodes colored│  │  • TypeScript types    │  │
-│  │              │  │ by instability│  │                        │  │
-│  └──────────────┘  └──────────────┘  └────────────────────────┘  │
-│                                                                   │
-│  Design: TailwindCSS · Framer Motion · Dark Mode (default)       │
-│  Deploy: Vercel (edge/static)                                    │
-└─────────────────────────────────────────────────────────────────┘
-```
+Errors are handled via a centralized Exception Hierarchy (`NetPulseException`) which guarantees a consistent JSON format: `{"error": {"code": 404, "message": "Not Found"}}`.
 
-### 2.6 Observability
+### 2.4 Frontend (Next.js)
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      OBSERVABILITY                               │
-│                                                                   │
-│  Structured Logging (structlog)                                  │
-│    • JSON format in production                                   │
-│    • Colored console in development                              │
-│    • Key events: ingestion_batch, ml_inference, incident_created │
-│                                                                   │
-│  Metrics (Prometheus-compatible /metrics endpoint)               │
-│    • ingestion_lag_seconds{source="ripe_atlas"}                  │
-│    • bgp_events_ingested_total                                   │
-│    • ml_inference_duration_seconds{model="gnn"}                  │
-│    • api_request_duration_seconds{endpoint="/api/v1/map/probes"} │
-│    • active_ws_connections                                       │
-│    • incidents_total{severity="high"}                            │
-│                                                                   │
-│  Health (/health endpoint)                                       │
-│    • database: connection + query test                           │
-│    • redis: ping test                                            │
-│    • data_freshness: last ingestion timestamp per source         │
-│    • ml_status: last inference timestamp per model               │
-└─────────────────────────────────────────────────────────────────┘
-```
+Uses `next/dynamic` extensively to lazy-load massive WebGL bundles (`deck.gl`, `react-force-graph-3d`) ensuring the initial JavaScript payload remains small and TTI is fast. All API requests route through a strongly-typed `apiClient` singleton that manages JWT injection.
 
 ---
 
-## 3. Deployment Architecture
-
-```
-┌────────────────────────┐        ┌────────────────────────────┐
-│       Vercel CDN        │        │  Railway / Fly.io          │
-│                         │        │  (single instance)         │
-│  Next.js static/SSR     │  REST  │                            │
-│  frontend               │◄──────►│  FastAPI backend           │
-│                         │  + WS  │  + APScheduler (in-proc)   │
-│  Edge-cached            │        │  + ML inference (CPU)      │
-│                         │        │                            │
-└────────────────────────┘        └───────────┬────────────────┘
-                                              │
-                         ┌────────────────────┼────────────────────┐
-                         │                    │                    │
-                    ┌────▼────┐         ┌─────▼─────┐       ┌─────▼─────┐
-                    │ Postgres │         │   Redis   │       │   Claude  │
-                    │ + Timescale│       │  (Upstash/ │       │   API     │
-                    │ (Timescale │       │  Railway)  │       │(Anthropic)│
-                    │  Cloud /   │       │            │       │           │
-                    │  Railway)  │       │  256MB–1GB │       │  Bounded  │
-                    │            │       │            │       │  ≤10/hr   │
-                    │  10–100 GB │       └────────────┘       └───────────┘
-                    └────────────┘
-
-   No Docker. No Kubernetes. No multi-service orchestration.
-   See ADR-0005 for rationale.
-```
-
-**GNN Training** (offline, not part of the deployed service):
-- Run on Google Colab, Lambda Cloud, or local GPU
-- Export trained model weights (`.pt` file)
-- Upload to backend; inference runs on CPU
-
----
-
-## 4. Cross-Cutting Concerns
-
-### 4.1 Configuration
-
-All configuration via environment variables with `NETPULSE_` prefix,
-managed by pydantic-settings. A `.env.example` documents all variables.
-
-### 4.2 Error Handling
-
-- All external API calls wrapped in circuit breakers (exponential backoff)
-- Database errors: retry with backoff; log and continue for non-critical writes
-- ML inference errors: log and serve stale predictions from cache
-- LLM errors: serve incident without explanation text
-
-### 4.3 Data Attribution
-
-Required attributions built into the codebase:
-- CAIDA: citation in `README.md` + API response headers
-- RIPE RIS: `?client=netpulse` on WebSocket connections
-- Cloudflare Radar: CC BY-NC 4.0 attribution in UI footer
-
----
-
-## 5. ADR Index
+## 3. ADR Index
 
 | ADR | Title | Status |
 |---|---|---|
 | [ADR-0001](adr/0001-database-choice.md) | Database Choice: PostgreSQL + TimescaleDB | Accepted |
 | [ADR-0002](adr/0002-graph-storage-strategy.md) | Graph Storage: Postgres Adjacency over Neo4j | Accepted |
-| [ADR-0003](adr/0003-ml-framework-choice.md) | ML Framework: PyTorch Geometric Temporal | Accepted |
+| [ADR-0003](adr/0003-ml-framework-choice.md) | ML Framework: PyTorch Geometric Temporal | Accepted *(Implementation diverged to Custom GConvGRU for stability)* |
 | [ADR-0004](adr/0004-llm-usage-boundary.md) | LLM Usage Boundary: Explanation Only | Accepted |
 | [ADR-0005](adr/0005-deployment-strategy-no-docker.md) | Deployment: No Docker, Single-Service | Accepted |

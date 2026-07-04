@@ -76,3 +76,10 @@ This document details the provenance, licensing, and schema mappings of the prim
   # format:peer-as|peer-as|0
   1|115|0|bgp
   ```
+
+## 5. Cloudflare Radar
+* **Description**: Aggregated Internet traffic and outage data from Cloudflare's global network edge. Used as a corroboration signal for incidents.
+* **URL**: [https://radar.cloudflare.com/](https://radar.cloudflare.com/)
+* **License/Usage Terms**: Cloudflare, Inc. (CC BY-NC 4.0).
+* **Refresh Cadence**: Polled via API.
+* **Fields Used**: Outage signals, traffic anomalies.

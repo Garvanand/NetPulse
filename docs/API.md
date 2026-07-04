@@ -2,6 +2,14 @@
 
 This document is automatically generated from the OpenAPI schema.
 
+## Authentication
+
+All endpoints (except `/health` and `/`) require a valid JWT Bearer token in the `Authorization` header.
+- Header Format: `Authorization: Bearer <token>`
+- WebSocket Auth: Supply token as a query parameter `?token=<token>`
+
+---
+
 ## GET /health
 **Summary:** Health Check
 

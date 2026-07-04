@@ -24,7 +24,7 @@ This document outlines the security boundary, threat model (STRIDE), and active 
 **Mitigation**:
 - **JWT Authentication**: The frontend and API strictly enforce RS256/HS256 JWT validation for all state-modifying or sensitive routes.
 - **API Keys**: Ingestion scripts must provide a hashed API key to push data. Plaintext API keys are never stored in the database.
-- **Password Hashing**: User passwords use `bcrypt` (Passlib default work factor, auto-upgrading) with unique salts.
+- **Password Hashing**: User passwords use `bcrypt` (rounds=12) with unique salts, implemented via Passlib.
 
 ### Tampering (Data Modification)
 **Risk**: An attacker manipulates BGP streams or Latency Measurements in transit or at rest.

@@ -1,8 +1,7 @@
 # NetPulse — System Design
 
 > Conceptual design document covering data model, API contract style,
-> and component responsibilities. Implementation details (DDL, OpenAPI spec)
-> are deferred to later prompts.
+> and component responsibilities, reflecting the final implemented state.
 
 **Status:** Locked as of 2026-07-04
 
@@ -22,150 +21,28 @@ Observe → Store → Analyze → Predict → Explain → Visualize
 ```
 
 1. **Observe** — Continuously ingest BGP updates, active probe measurements,
-   and AS topology data from 5 verified external sources.
+   and AS topology data via custom ingestion clients (RIPE Atlas, RIS Live, RouteViews, CAIDA).
 2. **Store** — Persist time-series measurement data and BGP events in
-   TimescaleDB hypertables; maintain an AS relationship graph in relational
+   **TimescaleDB hypertables**; maintain an AS relationship graph in relational
    adjacency tables.
-3. **Analyze** — Run statistical anomaly detection (Z-score, MAD) on streaming
-   data in real-time; compute per-AS BGP churn rates against rolling baselines.
-4. **Predict** — A temporal GNN processes periodic graph snapshots (AS topology
-   + node features) to forecast per-AS instability 1–4 hours ahead; a
-   lightweight LSTM/Transformer forecasts per-probe latency trends.
-5. **Explain** — When an incident is confirmed (anomaly + prediction
-   corroboration), a single bounded Claude API call generates a 2–3 sentence
-   natural-language root-cause hypothesis from structured JSON context.
-6. **Visualize** — The Next.js frontend renders an interactive world map with
-   probe overlays, AS topology graph, incident timeline, and prediction
-   confidence heatmaps.
+3. **Analyze** — Run statistical anomaly detection on structured
+   data; compute BGP churn rates and latency Z-scores.
+4. **Predict** — A temporal GNN processes graph snapshots to forecast per-AS instability. ML inference runs inside an `asyncio.to_thread` pool to prevent blocking the FastAPI event loop.
+5. **Explain** — When an incident is confirmed, an asynchronous call to the **Anthropic Claude API** generates a 2–3 sentence natural-language root-cause hypothesis from a strict JSON context.
+6. **Visualize** — The Next.js frontend renders an interactive world map (Deck.GL), a 3D AS topology graph, incident timelines, and heatmaps.
 
 ---
 
 ## 2. Conceptual Data Model
 
-### 2.1 Table Overview
-
-```mermaid
-erDiagram
-    probes {
-        int probe_id PK
-        int asn
-        string country
-        float latitude
-        float longitude
-        string status
-        datetime updated_at
-    }
-
-    probe_measurements {
-        datetime time PK
-        int probe_id PK
-        inet target_ip
-        string measurement_type
-        float rtt_ms
-        float packet_loss
-        int asn_src
-        int asn_dst
-        string country_src
-        string country_dst
-        jsonb raw_json
-    }
-
-    bgp_events {
-        datetime time PK
-        uuid id PK
-        string collector
-        string event_type
-        cidr prefix
-        int peer_asn
-        int origin_asn
-        int[] as_path
-        int[][] communities
-        jsonb raw_json
-    }
-
-    as_relationships {
-        int asn_a PK
-        int asn_b PK
-        string rel_type
-        string source
-        datetime updated_at
-    }
-
-    as_metadata {
-        int asn PK
-        string name
-        string org
-        string country
-        int cone_size
-        datetime updated_at
-    }
-
-    incidents {
-        uuid id PK
-        datetime detected_at
-        string severity
-        string incident_type
-        int[] affected_asns
-        cidr[] affected_prefixes
-        float prediction_score
-        text explanation
-        datetime resolved_at
-        jsonb incident_metadata
-    }
-
-    users {
-        uuid id PK
-        string email
-        string hashed_password
-        boolean is_active
-        string tier
-        datetime created_at
-    }
-    
-    api_keys {
-        uuid id PK
-        uuid user_id FK
-        string key_hash
-        datetime created_at
-    }
-
-    probes ||--o{ probe_measurements : "records"
-    as_relationships }o--o{ as_metadata : "describes"
-    users ||--o{ api_keys : "owns"
-```
-
-### 2.2 Design Rationale
+### 2.1 Design Rationale & Graph Strategy
 
 | Table | Storage Strategy | Why |
 |---|---|---|
-| `probe_measurements` | TimescaleDB hypertable on `time` | High-volume append-only writes (~12K probes × every 5 min); automatic chunk management; time-range queries dominant |
-| `bgp_events` | TimescaleDB hypertable on `time` | Very high volume BGP stream (~1K events/sec during convergence); time-windowed aggregations for churn rate |
-| `as_relationships` | Standard Postgres table | Updated daily from CAIDA; ~300K rows; adjacency queries via indexed joins; no time partitioning needed |
-| `as_metadata` | Standard Postgres table | Small (~75K rows); enrichment join target; infrequently updated |
-| `probes` | Standard Postgres table | Cached probe registry (~12K rows); point lookups by probe_id or spatial queries |
-| `incidents` | Standard Postgres table | Low volume (tens per day); complex queries with filters; stores cached LLM explanations |
-
-### 2.3 Graph Storage Strategy
-
-The AS topology graph is stored as a **relational adjacency list** in the
-`as_relationships` table, not in a dedicated graph database.
-
-**Query patterns supported:**
-- Get all neighbors of an AS: `WHERE asn_a = ? OR asn_b = ?`
-- Get full graph for GNN snapshot: `SELECT * FROM as_relationships`
-- Get subgraph for visualization: filtered by cone_size / relationship type
-
-**Why not Neo4j:** See [ADR-0002](adr/0002-graph-storage-strategy.md).
-
-### 2.4 Data Retention
-
-| Table | Retention | Rationale |
-|---|---|---|
-| `probe_measurements` | 90 days (configurable) | Training needs ~90 days; older data archived or dropped via TimescaleDB retention policy |
-| `bgp_events` | 90 days | Same as measurements; BGP history beyond 90 days available from RouteViews archives if needed |
-| `as_relationships` | Current only (overwritten on each CAIDA refresh) | Topology changes slowly; historical snapshots reconstructable from CAIDA archives |
-| `incidents` | Indefinite | Low volume; historical incidents are valuable for trend analysis and model evaluation |
-| `probes` | Current only | Live registry; historical probe data available from RIPE Atlas archives |
+| `probe_measurements` | TimescaleDB hypertable | High-volume append-only writes. Queries dominant on time ranges. |
+| `bgp_events` | TimescaleDB hypertable | Very high volume BGP stream. Windowed aggregations for churn rate. |
+| `as_relationships` | Relational Adjacency | Updated daily from CAIDA. Indexed joins satisfy our neighborhood and graph serialization queries. See [ADR-0002](adr/0002-graph-storage-strategy.md). |
+| `incidents` | Standard Postgres | Low volume; stores metadata arrays and cached LLM explanations (JSONB). |
 
 ---
 
@@ -173,129 +50,61 @@ The AS topology graph is stored as a **relational adjacency list** in the
 
 ### 3.1 REST API
 
-- **Convention:** JSON:API-inspired, but not strictly compliant (pragmatic approach)
+- **Convention:** JSON:API-inspired, strongly-typed via Pydantic.
 - **Versioning:** URL path prefix `/api/v1/`
-- **Authentication:** JWT bearer tokens in `Authorization` header
-- **Rate Limiting:** Redis-backed sliding window; 60 req/min default, 10 req/min burst
-- **Pagination:** Cursor-based for time-series endpoints; offset-based for entity lists
-- **Error Format:** Consistent `{ "error": { "code": "...", "message": "..." } }`
-- **Caching:** `Cache-Control` headers on map/topology endpoints; Redis cache for hot data
+- **Authentication:** JWT bearer tokens in `Authorization` header. Bcrypt hashing with 12 rounds.
+- **Error Format:** Centralized Domain Exceptions yielding `{ "error": { "code": 400, "message": "..." } }`
+- **Caching:** Expensive routes (like `/api/v1/topology/as-graph`) are backed by a **Redis Cache** (dropping p95 latency to <18ms).
+- **Architecture**: Enforces the **Repository Pattern**. Routers interact strictly with Repositories (`IncidentRepository`, etc.), fully decoupling HTTP transport from SQL syntax.
 
-### 3.2 Endpoint Categories
-
-| Category | Pattern | Examples |
-|---|---|---|
-| **Map Data** | `GET /api/v1/map/*` | Probes, incident overlays, heatmap tiles |
-| **AS Intelligence** | `GET /api/v1/as/{asn}/*` | Detail, predictions, neighbors |
-| **Incidents** | `GET /api/v1/incidents/*` | List (paginated, filterable), detail + explanation |
-| **Topology** | `GET /api/v1/topology` | AS graph subgraph for visualization |
-| **Time Series** | `GET /api/v1/timeseries/{probe_id}` | Per-probe latency history |
-| **Health** | `GET /health`, `GET /metrics` | System status, Prometheus metrics |
-
-### 3.3 WebSocket Contract
+### 3.2 WebSocket Contract
 
 A single WebSocket endpoint at `/ws/live` multiplexes message types:
-
-```json
-{
-  "type": "incident" | "measurement" | "prediction" | "heartbeat",
-  "timestamp": "2026-07-04T12:00:00Z",
-  "data": { ... }
-}
-```
-
-| Message Type | Trigger | Payload Summary |
-|---|---|---|
-| `incident` | New incident detected or updated | Incident ID, severity, type, affected ASNs |
-| `measurement` | Aggregated probe anomaly update (every 30s) | Probe ID, anomaly score, RTT |
-| `prediction` | New GNN prediction batch (every hour) | AS list with instability scores |
-| `heartbeat` | Every 30 seconds | Server timestamp, connection count |
-
-**Subscription model:** Clients can send a filter message on connect to subscribe
-to specific ASNs, regions, or severity levels. Unfiltered connections receive all
-messages (with rate limiting applied).
+Expects a JWT token in the query params for authentication.
 
 ---
 
 ## 4. Component Responsibilities
 
-### 4.1 Ingestion Layer
+### 4.1 Ingestion Layer (Implemented)
 
-| Component | Responsibility | I/O |
-|---|---|---|
-| `ripe_atlas.py` | Poll public built-in measurements via REST API | → `probe_measurements`, `probes` |
-| `ris_live.py` | Consume BGP updates via WebSocket stream | → `bgp_events` |
-| `routeviews.py` | Download + parse MRT archives (BGPKIT) | → `bgp_events` |
-| `caida.py` | Download + parse AS relationship dataset | → `as_relationships`, `as_metadata` |
-| `cloudflare_radar.py` | Poll outage/traffic signals via REST API | → `incidents.metadata` (corroboration) |
+| Component | Responsibility |
+|---|---|
+| `ripe_atlas_client.py` | Poll public built-in measurements via REST API |
+| `ripe_ris_client.py` | Consume BGP updates via RIS Live |
+| `routeviews_client.py` | Download + parse MRT archives |
+| `caida_loader.py` | Download + parse AS relationship dataset |
 
 ### 4.2 ML Engine
 
-| Component | Responsibility | I/O |
-|---|---|---|
-| `anomaly.py` | Statistical anomaly detection (Z-score, MAD) | `probe_measurements`, `bgp_events` → anomaly scores |
-| `timeseries.py` | LSTM/Transformer latency forecasting | `probe_measurements` → predicted RTT |
-| `gnn.py` | Temporal GNN instability prediction | `as_relationships` + features → per-AS instability score |
-| `explainer.py` | Claude API bounded explanation calls | Structured incident JSON → natural-language explanation |
+| Component | Responsibility |
+|---|---|
+| `gnn_model.py` / `inference.py` | Custom PyTorch Temporal GNN instability prediction. Offloaded to background threads. |
+| `incident_engine.py` | Correlates GNN anomaly scores with latency and BGP churn thresholds. |
+| `explain_incident.py` | Invokes the Claude LLM with a strictly bounded Pydantic prompt for root-cause synthesis. |
 
 ### 4.3 Backend API
 
 | Component | Responsibility |
 |---|---|
-| `routes/health.py` | Health check with dependency status |
-| `routes/map.py` | Map data endpoints (probes, incidents) |
-| `routes/as_detail.py` | AS intelligence endpoints |
-| `routes/incidents.py` | Incident CRUD + explanation retrieval |
-| `routes/topology.py` | AS graph subgraph endpoint |
-| `routes/timeseries.py` | Per-probe latency history |
-| `websocket.py` | WebSocket manager for live updates |
-| `schemas.py` | Pydantic request/response models |
+| `routes/incidents.py` | Incident CRUD + lazy evaluation of LLM explanations. |
+| `routes/topology.py` | Redis-cached AS graph subgraph endpoint. |
+| `routes/measurements.py` | Per-probe latency history. |
+| `core/exceptions.py` | Global exception hierarchy. |
+| `db/repositories/` | Decoupled SQLAlchemy database layer. |
 
 ### 4.4 Frontend
 
 | Component | Responsibility |
 |---|---|
-| `map/` | deck.gl interactive world map with probe/incident layers |
-| `graph/` | AS topology graph visualization (force-directed) |
-| `timeline/` | Historical incident timeline with filters |
-| `ui/` | Shared design system components |
-| `hooks/` | `useWebSocket`, `useFetch`, `useMap` custom hooks |
-| `lib/` | API client, TypeScript types, utilities |
+| `map/` | `next/dynamic` lazy-loaded WebGL deck.gl interactive world map. |
+| `topology/` | AS topology graph visualization. |
+| `lib/api-client.ts` | Centralized typed HTTP fetch wrapper handling JWT injection. |
 
 ---
 
 ## 5. Security Model
 
-### 5.1 Authentication
-
-- **JWT tokens** signed with HS256 (configurable to RS256 for production)
-- Access tokens expire after 60 minutes (configurable)
-- API keys for programmatic access (stored hashed in database)
-
-### 5.2 Rate Limiting
-
-- Redis-backed sliding window counter
-- Default: 60 requests/minute per authenticated user
-- Burst: 10 requests above limit before hard rejection
-- Map tile endpoints: higher limit (120 req/min) due to multi-tile loads
-
-### 5.3 Data Sensitivity
-
-- All ingested data is **publicly available** from external sources
-- No PII is collected or stored
-- Incident explanations are generated from structured data, never from user input
-- Claude API calls never receive user-submitted content
-
----
-
-## 6. Failure Modes & Graceful Degradation
-
-| Failure | Impact | Mitigation |
-|---|---|---|
-| RIS Live WebSocket disconnect | BGP event gap | Auto-reconnect with exponential backoff; gap filled from RouteViews on next cycle |
-| RIPE Atlas API down | No new probe measurements | Serve cached data; statistical anomaly continues on existing data |
-| PostgreSQL down | Full outage | Health check returns `unhealthy`; no graceful degradation for core storage |
-| Redis down | No caching, no rate limiting | Fall through to database; accept slower responses |
-| Claude API down / budget exhausted | No incident explanations | Serve structured incident data without explanation text |
-| GNN model not yet trained | No instability predictions | Statistical anomaly detection provides baseline coverage |
-| Cloudflare Radar down | No corroboration signal | Non-critical; incident detection works without it |
+- **Authentication:** JWT tokens signed with HS256. 
+- **Rate Limiting:** Redis-backed sliding window counter. Default: 60 requests/minute.
+- **LLM Boundaries:** Claude API is heavily restricted to a single-shot completion on internal JSON states. No open-ended chat interface exists. See [ADR-0004](adr/0004-llm-usage-boundary.md).
