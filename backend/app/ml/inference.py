@@ -10,7 +10,7 @@ class NetPulseInference:
         self.model.load_state_dict(torch.load(model_path))
         self.model.eval()
         
-    def predict_instability(self, recent_measurements: list, recent_bgp: list, adj: torch.sparse.Tensor):
+    async def predict_instability(self, recent_measurements: list, recent_bgp: list, adj: torch.sparse.Tensor):
         """
         Runs inference on the latest 3 time windows.
         Returns a dictionary of ASN -> prediction score.
@@ -27,8 +27,13 @@ class NetPulseInference:
         # [seq_len=3, num_nodes, features]
         x_seq = torch.stack([curr_tensor, curr_tensor, curr_tensor])
         
-        with torch.no_grad():
-            preds = self.model(x_seq, adj).numpy()
+        import asyncio
+        
+        def _forward_pass():
+            with torch.no_grad():
+                return self.model(x_seq, adj).numpy()
+        
+        preds = await asyncio.to_thread(_forward_pass)
             
         results = {}
         for idx, score in enumerate(preds):

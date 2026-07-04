@@ -1,10 +1,16 @@
 "use client"
 
 import { useEffect, useMemo, useState } from 'react'
-import Map, { Source, Layer, Marker } from 'react-map-gl'
+import dynamic from 'next/dynamic'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNetPulseStore } from '@/lib/store'
+
+// Lazy load heavy map components
+const Map = dynamic(() => import('react-map-gl'), { ssr: false })
+const Source = dynamic(() => import('react-map-gl').then(mod => mod.Source), { ssr: false })
+const Layer = dynamic(() => import('react-map-gl').then(mod => mod.Layer), { ssr: false })
+const Marker = dynamic(() => import('react-map-gl').then(mod => mod.Marker), { ssr: false })
 
 // We will use a standard dark basemap
 const MAPTILER_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
