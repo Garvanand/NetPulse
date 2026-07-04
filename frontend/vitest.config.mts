@@ -9,7 +9,8 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     globals: true,
     css: false,
-    server: { deps: { inline: [/^(?!.*vitest).*$/] } }
+    pool: 'threads',
+    server: { deps: { inline: true } }
   },
   resolve: {
     alias: {

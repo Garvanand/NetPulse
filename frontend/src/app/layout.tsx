@@ -4,6 +4,8 @@ import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
 import { ToastProvider } from "@/components/ui/Toast";
 
+import { Navigation } from "@/components/Navigation";
+
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
@@ -23,7 +25,10 @@ export default function RootLayout({
       >
         <ToastProvider>
           <AuthProvider>
-            {children}
+            <Navigation />
+            <main>
+              {children}
+            </main>
           </AuthProvider>
         </ToastProvider>
       </body>
