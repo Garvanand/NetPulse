@@ -33,7 +33,8 @@ async def list_bgp_events(
     )
     
     if prefix:
-        base_stmt = base_stmt.where(BGPEventModel.prefix.cast(str) == prefix)
+        from sqlalchemy import String
+        base_stmt = base_stmt.where(BGPEventModel.prefix.cast(String) == prefix)
     if peer_asn:
         base_stmt = base_stmt.where(BGPEventModel.peer_asn == peer_asn)
         

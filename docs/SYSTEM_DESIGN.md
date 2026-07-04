@@ -44,56 +44,94 @@ Observe → Store → Analyze → Predict → Explain → Visualize
 
 ### 2.1 Table Overview
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        TIME-SERIES TABLES                           │
-│               (TimescaleDB hypertables, partitioned on `time`)      │
-│                                                                     │
-│  ┌─────────────────────────┐   ┌─────────────────────────────────┐  │
-│  │   probe_measurements    │   │          bgp_events             │  │
-│  │                         │   │                                 │  │
-│  │  time (PK, partition)   │   │  time (PK, partition)           │  │
-│  │  probe_id (PK)          │   │  id (PK, UUID)                  │  │
-│  │  target_ip              │   │  collector                      │  │
-│  │  measurement_type       │   │  event_type                     │  │
-│  │  rtt_ms                 │   │  prefix (CIDR)                  │  │
-│  │  packet_loss            │   │  peer_asn, origin_asn           │  │
-│  │  asn_src, asn_dst       │   │  as_path (INTEGER[])            │  │
-│  │  country_src/dst        │   │  communities                    │  │
-│  │  raw_json (JSONB)       │   │  raw_json (JSONB)               │  │
-│  └─────────────────────────┘   └─────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+erDiagram
+    probes {
+        int probe_id PK
+        int asn
+        string country
+        float latitude
+        float longitude
+        string status
+        datetime updated_at
+    }
 
-┌─────────────────────────────────────────────────────────────────────┐
-│                         GRAPH TABLES                                │
-│                 (Standard relational, adjacency list)                │
-│                                                                     │
-│  ┌─────────────────────────┐   ┌─────────────────────────────────┐  │
-│  │    as_relationships     │   │         as_metadata             │  │
-│  │                         │   │                                 │  │
-│  │  asn_a (PK)             │   │  asn (PK)                       │  │
-│  │  asn_b (PK)             │   │  name, org, country             │  │
-│  │  rel_type               │   │  cone_size                      │  │
-│  │  source                 │   │  updated_at                     │  │
-│  │  updated_at             │   │                                 │  │
-│  └─────────────────────────┘   └─────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────┘
+    probe_measurements {
+        datetime time PK
+        int probe_id PK
+        inet target_ip
+        string measurement_type
+        float rtt_ms
+        float packet_loss
+        int asn_src
+        int asn_dst
+        string country_src
+        string country_dst
+        jsonb raw_json
+    }
 
-┌─────────────────────────────────────────────────────────────────────┐
-│                       ENTITY TABLES                                 │
-│                                                                     │
-│  ┌─────────────────────────┐   ┌─────────────────────────────────┐  │
-│  │         probes          │   │          incidents              │  │
-│  │                         │   │                                 │  │
-│  │  probe_id (PK)          │   │  id (PK, UUID)                  │  │
-│  │  asn, country           │   │  detected_at, resolved_at       │  │
-│  │  latitude, longitude    │   │  severity, incident_type        │  │
-│  │  status                 │   │  affected_asns, affected_pfxs   │  │
-│  │  updated_at             │   │  prediction_score               │  │
-│  │                         │   │  explanation (cached LLM text)   │  │
-│  │                         │   │  metadata (JSONB)                │  │
-│  └─────────────────────────┘   └─────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────┘
+    bgp_events {
+        datetime time PK
+        uuid id PK
+        string collector
+        string event_type
+        cidr prefix
+        int peer_asn
+        int origin_asn
+        int[] as_path
+        int[][] communities
+        jsonb raw_json
+    }
+
+    as_relationships {
+        int asn_a PK
+        int asn_b PK
+        string rel_type
+        string source
+        datetime updated_at
+    }
+
+    as_metadata {
+        int asn PK
+        string name
+        string org
+        string country
+        int cone_size
+        datetime updated_at
+    }
+
+    incidents {
+        uuid id PK
+        datetime detected_at
+        string severity
+        string incident_type
+        int[] affected_asns
+        cidr[] affected_prefixes
+        float prediction_score
+        text explanation
+        datetime resolved_at
+        jsonb incident_metadata
+    }
+
+    users {
+        uuid id PK
+        string email
+        string hashed_password
+        boolean is_active
+        string tier
+        datetime created_at
+    }
+    
+    api_keys {
+        uuid id PK
+        uuid user_id FK
+        string key_hash
+        datetime created_at
+    }
+
+    probes ||--o{ probe_measurements : "records"
+    as_relationships }o--o{ as_metadata : "describes"
+    users ||--o{ api_keys : "owns"
 ```
 
 ### 2.2 Design Rationale
