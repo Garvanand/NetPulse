@@ -2,7 +2,7 @@
 
 > **Predict internet weather before it storms.**
 
-[![Live Demo](https://img.shields.io/badge/Demo-Live-green)](#) *(Placeholder for live demo)*
+[![Live Demo](https://img.shields.io/badge/Demo-Live-green)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 NetPulse is a predictive internet path intelligence platform. Unlike traditional reactive monitoring tools (like Downdetector or ThousandEyes) that alert you *after* a service goes down, NetPulse combines real-time BGP data, active network measurements, and Spatio-Temporal Graph Neural Networks (GNNs) to **forecast internet instability before it impacts users**.
@@ -164,5 +164,3 @@ This project uses the following datasets:
 - **RouteViews** — University of Oregon, http://www.routeviews.org/
 - **Cloudflare Radar** — Cloudflare, Inc. (CC BY-NC 4.0), https://radar.cloudflare.com/
 
-## License
-MIT
