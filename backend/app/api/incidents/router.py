@@ -45,12 +45,44 @@ async def get_incident(
     user: UserModel = Depends(get_current_active_user),
     rate_limit: None = Depends(RateLimiter(requests=60, window=60))
 ):
-    """Get details for a specific incident."""
+    """Get details for a specific incident. Triggers LLM explanation if missing."""
     stmt = select(IncidentModel).where(IncidentModel.id == incident_id)
     result = await session.execute(stmt)
     incident = result.scalar_one_or_none()
     
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
+        
+    # Lazy LLM Evaluation
+    if not incident.explanation and incident.incident_metadata:
+        try:
+            from app.llm.explain_incident import IncidentExplainer, LLMIncidentInput
+            
+            # Map metadata to strict Pydantic input
+            meta = incident.incident_metadata
+            signals = meta.get("signals", {})
+            
+            llm_input = LLMIncidentInput(
+                incident_id=str(incident.id),
+                affected_asn=meta.get("asn", 0),
+                severity=incident.severity,
+                gnn_score=signals.get("gnn_score", 0.0),
+                latency_z_score=signals.get("latency_z_score", 0.0),
+                packet_loss_z_score=signals.get("packet_loss_z_score", 0.0),
+                bgp_churn_count=signals.get("bgp_churn_count", 0)
+            )
+            
+            explainer = IncidentExplainer()
+            # This is synchronous but fast due to hard timeout
+            explanation = explainer.explain(llm_input)
+            
+            incident.explanation = explanation
+            await session.commit()
+            await session.refresh(incident)
+            
+        except Exception as e:
+            # We don't fail the API call if LLM fails
+            import logging
+            logging.error(f"Failed to generate LLM explanation: {e}")
         
     return incident
