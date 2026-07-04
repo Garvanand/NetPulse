@@ -4,7 +4,7 @@ NetPulse Backend — Dependency injection and lifespan management.
 Manages shared resources: database engine, async session factory, and Redis client.
 """
 
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import structlog
 from fastapi import FastAPI

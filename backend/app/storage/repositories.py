@@ -5,12 +5,12 @@ Provides typed, async repository classes that encapsulate database queries.
 All SQL is behind repository methods; routes never touch SQLAlchemy directly.
 """
 
-from datetime import datetime, timezone
-from typing import Sequence
+from collections.abc import Sequence
+from datetime import UTC, datetime
 from uuid import UUID
 
 import structlog
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,7 +46,7 @@ class ProbeRepository:
                 "latitude": stmt.excluded.latitude,
                 "longitude": stmt.excluded.longitude,
                 "status": stmt.excluded.status,
-                "updated_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(UTC),
             },
         )
         result = await self.session.execute(stmt)
@@ -165,7 +165,7 @@ class ASGraphRepository:
             set_={
                 "rel_type": stmt.excluded.rel_type,
                 "source": stmt.excluded.source,
-                "updated_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(UTC),
             },
         )
         result = await self.session.execute(stmt)
@@ -199,7 +199,7 @@ class ASGraphRepository:
                 "org": stmt.excluded.org,
                 "country": stmt.excluded.country,
                 "cone_size": stmt.excluded.cone_size,
-                "updated_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(UTC),
             },
         )
         result = await self.session.execute(stmt)
@@ -251,5 +251,5 @@ class IncidentRepository:
         await self.session.execute(
             update(IncidentModel)
             .where(IncidentModel.id == incident_id)
-            .values(resolved_at=datetime.now(timezone.utc))
+            .values(resolved_at=datetime.now(UTC))
         )

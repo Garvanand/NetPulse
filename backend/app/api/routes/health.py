@@ -5,7 +5,7 @@ Reports application health including database and Redis connectivity,
 and data source freshness metrics.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -65,7 +65,7 @@ async def health_check(
         "status": "healthy" if overall_healthy else "degraded",
         "version": settings.app_version,
         "environment": settings.environment,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "checks": checks,
     }
 

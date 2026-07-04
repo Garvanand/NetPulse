@@ -1,7 +1,7 @@
 # NetPulse — Implementation Plan
 
 **Last Updated:** 2026-07-04
-**Current Phase:** 0 — Scope Lock (this document)
+**Current Phase:** 1 — Foundation (Prompt 3 queued)
 
 ---
 
@@ -9,8 +9,8 @@
 
 | Phase | Name | Goal | Status |
 |---|---|---|---|
-| 0 | Scope Lock | Verify feasibility, produce planning docs | ✅ Active |
-| 1 | Foundation | Project scaffold, DB schema, ingestion skeleton | ⬜ |
+| 0 | Scope Lock | Verify feasibility, produce planning docs | ✅ Complete |
+| 1 | Foundation | Project scaffold, DB schema, ingestion skeleton | ⏳ Queued |
 | 2 | Data Pipeline | Live ingestion from all 5 sources, storage working | ⬜ |
 | 3 | ML — Baseline | Statistical anomaly detection, basic time-series forecasting | ⬜ |
 | 4 | ML — GNN | Temporal GNN over AS graph, instability prediction | ⬜ |

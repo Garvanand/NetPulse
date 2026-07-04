@@ -2,16 +2,16 @@
 NetPulse Backend — FastAPI application entry point.
 """
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes.health import router as health_router
 from app.config import get_settings
 from app.dependencies import lifespan_dependencies, shutdown_dependencies
-from app.api.routes.health import router as health_router
 from app.observability.logging import setup_logging
 
 logger = structlog.get_logger()
@@ -48,7 +48,10 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
-        description="Predictive internet path intelligence platform — predict internet weather before it storms.",
+        description=(
+            "Predictive internet path intelligence platform"
+            " — predict internet weather before it storms."
+        ),
         docs_url="/docs" if settings.environment != "production" else None,
         redoc_url="/redoc" if settings.environment != "production" else None,
         lifespan=lifespan,

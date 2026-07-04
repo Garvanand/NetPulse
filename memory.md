@@ -3,7 +3,7 @@
 > "Predict internet weather before it storms."
 
 **Last Updated:** 2026-07-04
-**Status:** Planning (Prompt 3 — Scope Lock)
+**Status:** Architecture locked as of 2026-07-04, see docs/ARCHITECTURE.md + ADRs.
 
 ---
 
