@@ -40,7 +40,16 @@ pip install -e .
 
 # Copy and configure environment
 cp .env.example .env
-# Edit .env with your database credentials and API keys
+
+### Required Environment Variables
+Ensure `.env` is populated before starting the server. `NETPULSE_` prefix is required.
+
+| Variable | Description |
+|---|---|
+| `NETPULSE_DATABASE_URL` | PostgreSQL connection string (asyncpg) |
+| `NETPULSE_JWT_SECRET_KEY` | 32-byte hex secret for JWT signing |
+| `NETPULSE_CLAUDE_API_KEY` | Anthropic API Key (Required for explanations) |
+| `NETPULSE_CORS_ORIGINS` | JSON list of allowed origins (e.g. `["http://localhost:3000"]`) |
 
 # Run database migrations
 alembic upgrade head

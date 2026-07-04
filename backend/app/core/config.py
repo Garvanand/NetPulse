@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     workers: int = 1  # Single instance — no multi-worker needed
+    cors_origins: list[str] = Field(
+        default=["http://localhost:3000"],
+        description="List of allowed CORS origins"
+    )
 
     # ── Database (PostgreSQL + TimescaleDB) ──────────────────────────
     database_url: str = Field(

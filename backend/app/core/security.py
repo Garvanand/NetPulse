@@ -15,14 +15,29 @@ from app.core.config import get_settings
 from app.core.dependencies import get_db_session
 from app.db.models import UserModel
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Enforce strict hashing with a minimum work factor
+pwd_context = CryptContext(
+    schemes=["bcrypt"], 
+    deprecated="auto", 
+    bcrypt__rounds=12
+)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verifies a plain password against the stored bcrypt hash."""
     return pwd_context.verify(plain_password, hashed_password)
 
 def get_password_hash(password: str) -> str:
+    """Hashes a password with bcrypt (rounds=12)."""
     return pwd_context.hash(password)
+
+def verify_api_key(plain_api_key: str, hashed_api_key: str) -> bool:
+    """Verifies an ingestion API key."""
+    return pwd_context.verify(plain_api_key, hashed_api_key)
+
+def get_api_key_hash(api_key: str) -> str:
+    """Hashes an ingestion API key before storage."""
+    return pwd_context.hash(api_key)
 
 def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
     settings = get_settings()
