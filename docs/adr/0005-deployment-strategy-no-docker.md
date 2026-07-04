@@ -12,9 +12,10 @@ NetPulse is a **portfolio-grade project** built and operated by a single
 developer. The production deployment target is:
 
 - **Frontend:** Vercel (static/SSR Next.js, edge-cached)
-- **Backend:** Railway or Fly.io (single Python process)
-- **Database:** Managed PostgreSQL + TimescaleDB (Timescale Cloud or Railway)
-- **Cache:** Managed Redis (Upstash or Railway)
+- **Backend:** Railway (single Python process deployed via Nixpacks)
+- **Database:** Timescale Cloud (Managed PostgreSQL + TimescaleDB)
+- **Cache:** Railway (Managed Redis)
+- **Cron Jobs:** Railway Cron (invoking native Python scripts)
 
 The backend is a single FastAPI application that embeds all functionality:
 REST API, WebSocket server, ML inference, data ingestion (APScheduler), and
