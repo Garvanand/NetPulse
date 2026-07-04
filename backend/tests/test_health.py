@@ -6,7 +6,15 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
+from app.core.dependencies import get_db_session, get_redis
 
+from unittest.mock import MagicMock
+
+async def mock_get_db_session():
+    yield MagicMock()
+
+app.dependency_overrides[get_db_session] = mock_get_db_session
+app.dependency_overrides[get_redis] = lambda: None
 
 @pytest.fixture
 async def client():
