@@ -3,15 +3,17 @@ NetPulse Backend — FastAPI application entry point.
 """
 
 from collections.abc import AsyncGenerator
+import os
 from contextlib import asynccontextmanager
 
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from app.core.exceptions import NetPulseException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 import uuid
 import time
-from fastapi import Request
 
 from app.api.routes.health import router as health_router
 from app.api.measurements.router import router as measurements_router
@@ -108,6 +110,15 @@ def create_app() -> FastAPI:
     app.include_router(incidents_router)
     app.include_router(predictions_router)
     app.include_router(ws_router)
+    
+    # ── Exception Handlers ───────────────────────────────────────
+    
+    @app.exception_handler(NetPulseException)
+    async def netpulse_exception_handler(request: Request, exc: NetPulseException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": exc.status_code, "message": exc.message}},
+        )
 
     return app
 

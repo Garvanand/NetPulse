@@ -1,4 +1,4 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, HTTPException, status
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, status
 from typing import Any
 import asyncio
 import structlog

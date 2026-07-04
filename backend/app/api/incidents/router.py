@@ -1,13 +1,14 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
 
 from app.api.incidents.schemas import IncidentResponse, PaginatedIncidents
 from app.core.dependencies import get_db_session
 from app.core.security import get_current_active_user
 from app.core.rate_limit import RateLimiter
-from app.db.models import IncidentModel, UserModel
+from app.core.exceptions import NotFoundError
+from app.db.models import UserModel
+from app.db.repositories.incident_repo import IncidentRepository
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
 
@@ -22,20 +23,8 @@ async def list_incidents(
     rate_limit: None = Depends(RateLimiter(requests=60, window=60))
 ):
     """List network incidents."""
-    base_stmt = select(IncidentModel)
-    
-    if severity:
-        base_stmt = base_stmt.where(IncidentModel.severity == severity)
-    if active_only:
-        base_stmt = base_stmt.where(IncidentModel.resolved_at.is_(None))
-        
-    count_stmt = select(func.count()).select_from(base_stmt.subquery())
-    total = await session.scalar(count_stmt) or 0
-    
-    stmt = base_stmt.order_by(IncidentModel.detected_at.desc()).offset((page - 1) * size).limit(size)
-    result = await session.execute(stmt)
-    items = result.scalars().all()
-    
+    repo = IncidentRepository(session)
+    items, total = await repo.get_incidents(severity=severity, active_only=active_only, page=page, size=size)
     return PaginatedIncidents(items=items, total=total, page=page, size=size)
 
 @router.get("/{incident_id}", response_model=IncidentResponse)
@@ -46,12 +35,11 @@ async def get_incident(
     rate_limit: None = Depends(RateLimiter(requests=60, window=60))
 ):
     """Get details for a specific incident. Triggers LLM explanation if missing."""
-    stmt = select(IncidentModel).where(IncidentModel.id == incident_id)
-    result = await session.execute(stmt)
-    incident = result.scalar_one_or_none()
+    repo = IncidentRepository(session)
+    incident = await repo.get_by_id(incident_id)
     
     if not incident:
-        raise HTTPException(status_code=404, detail="Incident not found")
+        raise NotFoundError("Incident not found")
         
     # Lazy LLM Evaluation
     if not incident.explanation and incident.incident_metadata:
@@ -74,7 +62,8 @@ async def get_incident(
             
             explainer = IncidentExplainer()
             # This is synchronous but fast due to hard timeout
-            explanation = explainer.explain(llm_input)
+            import asyncio
+            explanation = await asyncio.to_thread(explainer.explain, llm_input)
             
             incident.explanation = explanation
             await session.commit()

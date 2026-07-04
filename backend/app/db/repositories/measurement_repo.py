@@ -9,10 +9,12 @@ class MeasurementRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_probes(self, country: str | None = None, limit: int = 100) -> Sequence[ProbeModel]:
+    async def get_probes(self, country: str | None = None, asn: int | None = None, limit: int = 100) -> Sequence[ProbeModel]:
         stmt = select(ProbeModel)
         if country:
             stmt = stmt.where(ProbeModel.country == country.upper())
+        if asn:
+            stmt = stmt.where(ProbeModel.asn == asn)
         stmt = stmt.limit(limit)
         result = await self.session.execute(stmt)
         return result.scalars().all()

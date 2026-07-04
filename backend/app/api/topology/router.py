@@ -1,7 +1,6 @@
 import json
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_
 from redis.asyncio import Redis
 
 from app.api.topology.schemas import PaginatedTopology
@@ -32,25 +31,14 @@ async def get_as_graph(
         if cached_data:
             return json.loads(cached_data)
             
-    # 2. Database Query
-    base_stmt = select(ASRelationshipModel)
-    if asn:
-        base_stmt = base_stmt.where(
-            or_(ASRelationshipModel.asn_a == asn, ASRelationshipModel.asn_b == asn)
-        )
-    if rel_type:
-        base_stmt = base_stmt.where(ASRelationshipModel.rel_type == rel_type)
-        
-    count_stmt = select(func.count()).select_from(base_stmt.subquery())
-    total = await session.scalar(count_stmt) or 0
-    
-    stmt = base_stmt.order_by(ASRelationshipModel.asn_a).offset((page - 1) * size).limit(size)
-    result = await session.execute(stmt)
+    # 2. Database Query via Repository
+    from app.db.repositories.topology_repo import TopologyRepository
+    repo = TopologyRepository(session)
+    items_models, total = await repo.get_graph(asn=asn, rel_type=rel_type, page=page, size=size)
     
     # We must construct a dict matching the schema so we can serialize to JSON for caching
-    # because Pydantic models aren't directly JSON serializable via standard json.dumps
     items = []
-    for rel in result.scalars().all():
+    for rel in items_models:
         items.append({
             "asn_a": rel.asn_a,
             "asn_b": rel.asn_b,

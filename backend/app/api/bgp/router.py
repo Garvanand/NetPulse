@@ -1,13 +1,14 @@
 from datetime import datetime
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
 
 from app.api.bgp.schemas import PaginatedBGPEvents
 from app.core.dependencies import get_db_session
 from app.core.security import get_current_active_user
 from app.core.rate_limit import RateLimiter
-from app.db.models import BGPEventModel, UserModel
+from app.core.exceptions import ValidationError
+from app.db.models import UserModel
+from app.db.repositories.bgp_repo import BGPRepository
 
 router = APIRouter(prefix="/bgp", tags=["bgp"])
 
@@ -25,25 +26,17 @@ async def list_bgp_events(
 ):
     """List BGP update events within a time range, optionally filtered by prefix or peer."""
     if start_time >= end_time:
-        raise HTTPException(status_code=422, detail="start_time must be before end_time")
+        raise ValidationError("start_time must be before end_time")
         
-    base_stmt = select(BGPEventModel).where(
-        BGPEventModel.time >= start_time,
-        BGPEventModel.time <= end_time
+    repo = BGPRepository(session)
+    items, total = await repo.get_events(
+        start_time=start_time,
+        end_time=end_time,
+        prefix=prefix,
+        peer_asn=peer_asn,
+        page=page,
+        size=size
     )
-    
-    if prefix:
-        from sqlalchemy import String
-        base_stmt = base_stmt.where(BGPEventModel.prefix.cast(String) == prefix)
-    if peer_asn:
-        base_stmt = base_stmt.where(BGPEventModel.peer_asn == peer_asn)
-        
-    count_stmt = select(func.count()).select_from(base_stmt.subquery())
-    total = await session.scalar(count_stmt) or 0
-    
-    stmt = base_stmt.order_by(BGPEventModel.time.desc()).offset((page - 1) * size).limit(size)
-    result = await session.execute(stmt)
-    items = result.scalars().all()
     
     # Convert prefix CIDR object to string for Pydantic
     for item in items:

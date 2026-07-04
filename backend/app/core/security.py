@@ -4,7 +4,7 @@ NetPulse Backend — Security and Authentication.
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.dependencies import get_db_session
+from app.core.exceptions import AuthenticationError
 from app.db.models import UserModel
 
 # Enforce strict hashing with a minimum work factor
@@ -60,11 +61,7 @@ async def get_current_user(
 ) -> UserModel:
     """Dependency to retrieve the currently authenticated user."""
     settings = get_settings()
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+    
     try:
         payload = jwt.decode(
             token, 
@@ -73,24 +70,27 @@ async def get_current_user(
         )
         email: str | None = payload.get("sub")
         if email is None:
-            raise credentials_exception
+            raise AuthenticationError("Could not validate credentials")
     except JWTError:
-        raise credentials_exception
+        raise AuthenticationError("Could not validate credentials")
 
     stmt = select(UserModel).where(UserModel.email == email)
     result = await session.execute(stmt)
     user = result.scalar_one_or_none()
     
     if user is None:
-        raise credentials_exception
+        raise AuthenticationError("Could not validate credentials")
     if not user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user")
+        from app.core.exceptions import AuthorizationError
+        raise AuthorizationError("Inactive user")
         
     return user
 
 async def get_current_active_user(
     current_user: UserModel = Depends(get_current_user)
 ) -> UserModel:
+    """Dependency to enforce that the user is both authenticated and active."""
     if not current_user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user")
+        from app.core.exceptions import AuthorizationError
+        raise AuthorizationError("Inactive user")
     return current_user

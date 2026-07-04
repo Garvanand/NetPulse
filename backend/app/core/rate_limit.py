@@ -61,8 +61,5 @@ class RateLimiter:
         current_requests = results[0]
 
         if current_requests > self.requests:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Rate limit exceeded",
-                headers={"Retry-After": str(self.window)},
-            )
+            from app.core.exceptions import NetPulseException
+            raise NetPulseException("Rate limit exceeded", status_code=429)
